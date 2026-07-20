@@ -92,6 +92,10 @@
 			will-change: transform;
 		}
 
+		#video-player::-webkit-media-controls {
+			display: none !important;
+		}
+
 		#video-player.dragging {
 			cursor: grabbing;
 		}
@@ -322,7 +326,7 @@
 		</div>
 
 		<div id="video-container">
-			<video id="video-player" controls playsinline>
+			<video id="video-player" playsinline>
 				Your browser does not support the video tag.
 			</video>
 			<div id="drop-overlay">Drag and Drop Video File</div>
@@ -347,6 +351,7 @@
 		var startPanX = 0;
 		var startPanY = 0;
 		var dragThreshold = 5;
+		videoPlayer.controls = false;
 
 		function clamp(value, minValue, maxValue) {
 			return Math.min(maxValue, Math.max(minValue, value));
@@ -423,6 +428,15 @@
 			panX = 0;
 			panY = 0;
 			applyVideoTransform(false);
+		}
+
+		function togglePlayback() {
+			if (videoPlayer.paused) {
+				videoPlayer.play().catch(function () {});
+				return;
+			}
+
+			videoPlayer.pause();
 		}
 
 		function handleDrop(event) {
@@ -512,20 +526,20 @@
 				return;
 			}
 
+			event.preventDefault();
+
 			isPointerDown = false;
 
 			if (!isDragging && !hasMoved) {
-				videoPlayer.paused ? videoPlayer.play().catch(function () {}) : videoPlayer.pause();
+				togglePlayback();
 			}
 
 			isDragging = false;
 			videoPlayer.classList.remove('dragging');
 		});
 		videoPlayer.addEventListener('click', function (event) {
-			if (event.target === videoPlayer && !hasMoved) {
-				event.preventDefault();
-				event.stopPropagation();
-			}
+			event.preventDefault();
+			event.stopPropagation();
 		});
 
 		videoPlayer.addEventListener('dblclick', function (event) {
