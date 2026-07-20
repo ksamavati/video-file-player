@@ -11,15 +11,114 @@
 			font-family: Arial, sans-serif;
 		} */
 
+		body {
+			margin: 0;
+			width: 100vw;
+			height: 100vh;
+			overflow: hidden;
+			display: block;
+			background: var(--bg);
+		}
+
+		.app-shell {
+			position: relative;
+			width: 100vw;
+			height: 100vh;
+			overflow: hidden;
+		}
+
+		.header-bar {
+			position: absolute;
+			top: 0;
+			left: 0;
+			right: 0;
+			height: 52px;
+			display: flex;
+			justify-content: flex-end;
+			align-items: center;
+			gap: 12px;
+			padding: 8px 16px;
+			z-index: 20;
+			background: rgba(0, 0, 0, 0.2);
+			backdrop-filter: blur(6px);
+		}
+
 		#video-container {
-			width: 90%;
-			margin: 50px auto;
-			border: 2px dashed var(--color);
-			/* #ccc; */
-			padding: 20px;
+			position: absolute;
+			top: 52px;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			margin: 0;
+			border: none;
+			padding: 0;
 			text-align: center;
-			/* background-color: #242424; */
+			background: #000;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			overflow: hidden;
 			transition: var(--speed) var(--easing);
+		}
+
+		#rotate-video-btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 10px 16px;
+			border: none;
+			border-radius: 6px;
+			background: #5c5c5c;
+			color: #ffffff;
+			cursor: pointer;
+			z-index: 30;
+		}
+
+		#rotate-video-btn:hover {
+			background: #6f6f6f;
+		}
+
+		#video-player {
+			max-width: 100%;
+			max-height: 100%;
+			width: auto;
+			height: auto;
+			display: block;
+			object-fit: contain;
+			transition: transform 0.3s ease;
+			background: #000;
+			cursor: grab;
+			touch-action: none;
+		}
+
+		#video-player.dragging {
+			cursor: grabbing;
+		}
+
+		#drop-overlay {
+			position: absolute;
+			inset: 0;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 24px;
+			font-size: 1.25rem;
+			font-weight: 600;
+			text-align: center;
+			color: #ffffff;
+			background: rgba(0, 0, 0, 0.45);
+			z-index: 10;
+			pointer-events: none;
+		}
+
+		#drop-overlay.hidden {
+			display: none;
+		}
+
+		.header-bar .toggle {
+			position: relative;
+			top: auto;
+			right: auto;
 		}
 
 		/* Light Mode Styles */
@@ -55,10 +154,9 @@
 </head>
 
 <body>
-	<!-- Dark Mode Toggle Button -->
-	<!-- <button id="theme-toggle" onclick="toggleTheme()">Toggle Dark Mode</button> -->
-
-	<button class="toggle" aria-pressed="false" title="Toggle Dark Mode">
+	<div class="app-shell">
+		<div class="header-bar">
+			<button class="toggle" aria-pressed="false" title="Toggle Dark Mode">
 		<span class="toggle__content">
 			<svg aria-hidden=true class="toggle__backdrop" xmlns="http://www.w3.org/2000/svg" fill="none"
 				viewBox="0 0 290 228">
@@ -218,33 +316,169 @@
 				</span>
 			</span>
 		</span>
-	</button>
+			</button>
+			<button id="rotate-video-btn" type="button">Rotate 90°</button>
+		</div>
 
-	<div id="video-container">
-		<h2>Drag and Drop Video File</h2>
-		<video id="video-player" width="100%" controls>
-			Your browser does not support the video tag.
-		</video>
+		<div id="video-container">
+			<video id="video-player" controls playsinline>
+				Your browser does not support the video tag.
+			</video>
+			<div id="drop-overlay">Drag and Drop Video File</div>
+		</div>
 	</div>
 
 	<script>
+		var videoPlayer = document.getElementById('video-player');
+		var rotateButton = document.getElementById('rotate-video-btn');
+		var videoContainer = document.getElementById('video-container');
+		var dropOverlay = document.getElementById('drop-overlay');
+		var videoRotation = 0;
+		var zoomLevel = 1;
+		var panX = 0;
+		var panY = 0;
+		var isDragging = false;
+		var dragStartX = 0;
+		var dragStartY = 0;
+		var startPanX = 0;
+		var startPanY = 0;
+
+		function clamp(value, minValue, maxValue) {
+			return Math.min(maxValue, Math.max(minValue, value));
+		}
+
+		function showPlaceholder() {
+			dropOverlay.classList.remove('hidden');
+		}
+
+		function hidePlaceholder() {
+			dropOverlay.classList.add('hidden');
+		}
+
+		function getVideoDisplaySize() {
+			var width = videoPlayer.videoWidth || videoPlayer.clientWidth || 300;
+			var height = videoPlayer.videoHeight || videoPlayer.clientHeight || 150;
+
+			if (videoRotation % 180 !== 0) {
+				var temp = width;
+				width = height;
+				height = temp;
+			}
+
+			return {
+				width: width,
+				height: height
+			};
+		}
+
+		function getPanLimits() {
+			var containerRect = videoContainer.getBoundingClientRect();
+			var displaySize = getVideoDisplaySize();
+			var scaledWidth = displaySize.width * zoomLevel;
+			var scaledHeight = displaySize.height * zoomLevel;
+
+			return {
+				maxPanX: Math.max(0, (scaledWidth - containerRect.width) / 2),
+				maxPanY: Math.max(0, (scaledHeight - containerRect.height) / 2)
+			};
+		}
+
+		function applyVideoTransform() {
+			var limits = getPanLimits();
+			panX = clamp(panX, -limits.maxPanX, limits.maxPanX);
+			panY = clamp(panY, -limits.maxPanY, limits.maxPanY);
+
+			videoPlayer.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + zoomLevel + ') rotate(' + videoRotation + 'deg)';
+			videoPlayer.style.transformOrigin = 'center center';
+		}
+
+		function resetView() {
+			zoomLevel = 1;
+			panX = 0;
+			panY = 0;
+			applyVideoTransform();
+		}
+
 		function handleDrop(event) {
 			event.preventDefault();
-			var videoPlayer = document.getElementById('video-player');
 			var file = event.dataTransfer.files[0];
 			var fileURL = URL.createObjectURL(file);
 
+			dropOverlay.classList.remove('hidden');
+			resetView();
 			videoPlayer.src = fileURL;
-			videoPlayer.play();
+			videoPlayer.load();
+			videoPlayer.play().catch(function () {});
 		}
 
 		function handleDragOver(event) {
 			event.preventDefault();
 		}
 
-		var videoContainer = document.getElementById('video-container');
 		videoContainer.addEventListener('drop', handleDrop);
 		videoContainer.addEventListener('dragover', handleDragOver);
+		videoPlayer.addEventListener('loadeddata', hidePlaceholder);
+		videoPlayer.addEventListener('loadedmetadata', function () {
+			hidePlaceholder();
+			applyVideoTransform();
+		});
+
+		videoContainer.addEventListener('wheel', function (event) {
+			if (!videoPlayer.src || !videoPlayer.videoWidth) {
+				return;
+			}
+
+			event.preventDefault();
+			var zoomDelta = event.deltaY < 0 ? 0.1 : -0.1;
+			zoomLevel = clamp(zoomLevel + zoomDelta, 1, 4);
+			applyVideoTransform();
+		}, { passive: false });
+
+		videoContainer.addEventListener('mousedown', function (event) {
+			if (!videoPlayer.src || !videoPlayer.videoWidth) {
+				return;
+			}
+
+			isDragging = true;
+			dragStartX = event.clientX;
+			dragStartY = event.clientY;
+			startPanX = panX;
+			startPanY = panY;
+			videoPlayer.classList.add('dragging');
+			event.preventDefault();
+		});
+
+		document.addEventListener('mousemove', function (event) {
+			if (!isDragging) {
+				return;
+			}
+
+			var deltaX = event.clientX - dragStartX;
+			var deltaY = event.clientY - dragStartY;
+			var limits = getPanLimits();
+
+			panX = clamp(startPanX + deltaX, -limits.maxPanX, limits.maxPanX);
+			panY = clamp(startPanY + deltaY, -limits.maxPanY, limits.maxPanY);
+			applyVideoTransform();
+		});
+
+		document.addEventListener('mouseup', function () {
+			if (!isDragging) {
+				return;
+			}
+
+			isDragging = false;
+			videoPlayer.classList.remove('dragging');
+		});
+
+		window.addEventListener('resize', applyVideoTransform);
+
+		if (rotateButton) {
+			rotateButton.addEventListener('click', function () {
+				videoRotation = (videoRotation + 90) % 360;
+				applyVideoTransform();
+			});
+		}
 
 		// Dark Mode Scripts
 		function toggleTheme() {
