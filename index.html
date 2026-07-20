@@ -1038,12 +1038,6 @@
 			var height = rect.height || videoPlayer.videoHeight || videoPlayer.clientHeight || 150;
 			videoPlayer.style.transform = currentTransform;
 
-			if (videoRotation % 180 !== 0) {
-				var temp = width;
-				width = height;
-				height = temp;
-			}
-
 			baseDisplaySize = {
 				width: width,
 				height: height
@@ -1078,7 +1072,24 @@
 			};
 		}
 
+		function getMinZoomLevel() {
+			var containerRect = videoContainer.getBoundingClientRect();
+			var displaySize = getVideoDisplaySize();
+
+			if (!displaySize.width || !displaySize.height) {
+				return 1;
+			}
+
+			return Math.min(
+				containerRect.width / displaySize.width,
+				containerRect.height / displaySize.height,
+				1
+			);
+		}
+
 		function applyVideoTransform(animate) {
+			var minZoomLevel = getMinZoomLevel();
+			zoomLevel = clamp(zoomLevel, minZoomLevel, 4);
 			var limits = getPanLimits();
 			panX = clamp(panX, -limits.maxPanX, limits.maxPanX);
 			panY = clamp(panY, -limits.maxPanY, limits.maxPanY);
@@ -1229,8 +1240,9 @@
 			}
 
 			event.preventDefault();
+			var minZoomLevel = getMinZoomLevel();
 			var zoomDelta = event.deltaY < 0 ? 0.1 : -0.1;
-			zoomLevel = clamp(zoomLevel + zoomDelta, 1, 4);
+			zoomLevel = clamp(zoomLevel + zoomDelta, minZoomLevel, 4);
 			applyVideoTransform(false);
 		}, { passive: false });
 
