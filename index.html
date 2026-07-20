@@ -339,11 +339,14 @@
 		var panX = 0;
 		var panY = 0;
 		var isDragging = false;
+		var isPointerDown = false;
+		var hasMoved = false;
 		var baseDisplaySize = { width: 0, height: 0 };
 		var dragStartX = 0;
 		var dragStartY = 0;
 		var startPanX = 0;
 		var startPanY = 0;
+		var dragThreshold = 5;
 
 		function clamp(value, minValue, maxValue) {
 			return Math.min(maxValue, Math.max(minValue, value));
@@ -463,7 +466,9 @@
 				return;
 			}
 
-			isDragging = true;
+			isPointerDown = true;
+			isDragging = false;
+			hasMoved = false;
 			dragStartX = event.clientX;
 			dragStartY = event.clientY;
 			startPanX = panX;
@@ -473,12 +478,23 @@
 		});
 
 		document.addEventListener('mousemove', function (event) {
-			if (!isDragging) {
+			if (!isPointerDown) {
 				return;
 			}
 
 			var deltaX = event.clientX - dragStartX;
 			var deltaY = event.clientY - dragStartY;
+			var movedDistance = Math.hypot(deltaX, deltaY);
+
+			if (movedDistance > dragThreshold) {
+				hasMoved = true;
+				isDragging = true;
+			}
+
+			if (!isDragging) {
+				return;
+			}
+
 			var limits = getPanLimits();
 			var targetPanX = startPanX + deltaX;
 			var targetPanY = startPanY + deltaY;
@@ -491,13 +507,36 @@
 			applyVideoTransform(shouldAnimate);
 		});
 
-		document.addEventListener('mouseup', function () {
-			if (!isDragging) {
+		document.addEventListener('mouseup', function (event) {
+			if (!isPointerDown) {
 				return;
+			}
+
+			isPointerDown = false;
+
+			if (!isDragging && !hasMoved) {
+				videoPlayer.paused ? videoPlayer.play().catch(function () {}) : videoPlayer.pause();
 			}
 
 			isDragging = false;
 			videoPlayer.classList.remove('dragging');
+		});
+		videoPlayer.addEventListener('click', function (event) {
+			if (event.target === videoPlayer && !hasMoved) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		});
+
+		videoPlayer.addEventListener('dblclick', function (event) {
+			event.preventDefault();
+			event.stopPropagation();
+
+			if (document.fullscreenElement) {
+				document.exitFullscreen().catch(function () {});
+			} else {
+				document.documentElement.requestFullscreen().catch(function () {});
+			}
 		});
 
 		window.addEventListener('resize', function () {
