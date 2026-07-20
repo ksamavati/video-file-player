@@ -85,6 +85,51 @@
 			text-align: right;
 		}
 
+		.seek-preview {
+			position: absolute;
+			left: 16px;
+			bottom: 82px;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			padding: 8px;
+			border-radius: 10px;
+			background: rgba(0, 0, 0, 0.86);
+			box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+			color: #ffffff;
+			pointer-events: none;
+			opacity: 0;
+			transform: translateY(6px);
+			transition: opacity 0.16s ease, transform 0.16s ease;
+			z-index: 25;
+		}
+
+		.seek-preview.visible {
+			opacity: 1;
+			transform: translateY(0);
+		}
+
+		.seek-preview__thumb {
+			width: 180px;
+			height: 101px;
+			border-radius: 8px;
+			background: #111;
+			object-fit: cover;
+			display: block;
+		}
+
+		.seek-preview__label {
+			font: 600 0.85rem/1 Arial, sans-serif;
+			text-align: center;
+			letter-spacing: 0.01em;
+		}
+
+		.seek-preview__status {
+			font: 500 0.78rem/1 Arial, sans-serif;
+			text-align: center;
+			color: rgba(255, 255, 255, 0.72);
+		}
+
 		#seek-slider {
 			flex: 1;
 			margin: 0;
@@ -387,6 +432,11 @@
 			<input id="seek-slider" type="range" min="0" max="100" value="0" step="0.1" aria-label="Seek video">
 			<div class="footer-time" id="time-display">0:00 / 0:00</div>
 		</div>
+		<div class="seek-preview" id="seek-preview" aria-hidden="true">
+			<img class="seek-preview__thumb" id="seek-preview-thumb" alt="Video preview thumbnail">
+			<div class="seek-preview__label" id="seek-preview-label">0:00</div>
+			<div class="seek-preview__status" id="seek-preview-status">Generating thumbnails…</div>
+		</div>
 	</div>
 
 	<script>
@@ -398,6 +448,10 @@
 		var footerBar = document.getElementById('footer-bar');
 		var seekSlider = document.getElementById('seek-slider');
 		var timeDisplay = document.getElementById('time-display');
+		var seekPreview = document.getElementById('seek-preview');
+		var seekPreviewThumb = document.getElementById('seek-preview-thumb');
+		var seekPreviewLabel = document.getElementById('seek-preview-label');
+		var seekPreviewStatus = document.getElementById('seek-preview-status');
 		var videoRotation = 0;
 		var zoomLevel = 1;
 		var panX = 0;
@@ -413,7 +467,25 @@
 		var dragThreshold = 5;
 		var isSeeking = false;
 		var lastPointerY = null;
+		var activeSourceToken = 0;
+		var activeSourceUrl = '';
+		var thumbnailCache = [];
+		var thumbnailGenerationRunning = false;
+		var hoverPreviewVisible = false;
+		var hoverPreviewTime = null;
+		var hoverPreviewClientX = null;
+		var previewCanvas = document.createElement('canvas');
+		var previewContext = previewCanvas.getContext('2d');
 		videoPlayer.controls = false;
+
+		function createThumbnailWorkerVideo() {
+			var workerVideo = document.createElement('video');
+			workerVideo.muted = true;
+			workerVideo.playsInline = true;
+			workerVideo.preload = 'auto';
+			workerVideo.crossOrigin = 'anonymous';
+			return workerVideo;
+		}
 
 		function clamp(value, minValue, maxValue) {
 			return Math.min(maxValue, Math.max(minValue, value));
@@ -442,6 +514,228 @@
 			}
 
 			return minutes + ':' + String(remainingSeconds).padStart(2, '0');
+		}
+
+		function setPreviewVisibility(shouldShow) {
+			hoverPreviewVisible = shouldShow;
+			seekPreview.classList.toggle('visible', shouldShow);
+			seekPreview.setAttribute('aria-hidden', shouldShow ? 'false' : 'true');
+		}
+
+		function positionHoverPreview(clientX) {
+			var previewWidth = seekPreview.offsetWidth || 196;
+			var nextLeft = clamp(clientX - previewWidth / 2, 16, window.innerWidth - previewWidth - 16);
+			seekPreview.style.left = nextLeft + 'px';
+		}
+
+		function updatePreviewStatus(text) {
+			seekPreviewStatus.textContent = text;
+		}
+
+		function clearThumbnailCache() {
+			for (var index = 0; index < thumbnailCache.length; index += 1) {
+				if (typeof thumbnailCache[index].imageUrl === 'string' && thumbnailCache[index].imageUrl.indexOf('blob:') === 0) {
+					URL.revokeObjectURL(thumbnailCache[index].imageUrl);
+				}
+			}
+
+			thumbnailCache = [];
+			seekPreviewThumb.removeAttribute('src');
+			seekPreviewLabel.textContent = '0:00';
+			updatePreviewStatus('Generating thumbnails…');
+		}
+
+		function findNearestThumbnail(timeInSeconds) {
+			if (!thumbnailCache.length) {
+				return null;
+			}
+
+			var nearestItem = thumbnailCache[0];
+			var nearestDistance = Math.abs(nearestItem.time - timeInSeconds);
+
+			for (var index = 1; index < thumbnailCache.length; index += 1) {
+				var candidate = thumbnailCache[index];
+				var candidateDistance = Math.abs(candidate.time - timeInSeconds);
+
+				if (candidateDistance < nearestDistance) {
+					nearestItem = candidate;
+					nearestDistance = candidateDistance;
+				}
+			}
+
+			return nearestItem;
+		}
+
+		function hideHoverPreview() {
+			hoverPreviewTime = null;
+			hoverPreviewClientX = null;
+			setPreviewVisibility(false);
+		}
+
+		function showHoverPreview(timeInSeconds) {
+			hoverPreviewTime = timeInSeconds;
+
+			if (!isFinite(timeInSeconds) || timeInSeconds < 0) {
+				hideHoverPreview();
+				return;
+			}
+
+			seekPreviewLabel.textContent = formatTime(timeInSeconds);
+			if (hoverPreviewClientX !== null) {
+				positionHoverPreview(hoverPreviewClientX);
+			}
+
+			var nearestThumbnail = findNearestThumbnail(timeInSeconds);
+
+			if (!nearestThumbnail) {
+				seekPreviewThumb.removeAttribute('src');
+				updatePreviewStatus(thumbnailGenerationRunning ? 'Generating thumbnails…' : 'Preview unavailable');
+				setPreviewVisibility(true);
+				return;
+			}
+
+			seekPreviewThumb.src = nearestThumbnail.imageUrl;
+			updatePreviewStatus('Nearest frame: ' + formatTime(nearestThumbnail.time) + (thumbnailGenerationRunning ? ' • generating…' : ''));
+			setPreviewVisibility(true);
+		}
+
+		function getHoverTimeFromEvent(event) {
+			var sliderRect = seekSlider.getBoundingClientRect();
+			var duration = Number(videoPlayer.duration);
+
+			if (!sliderRect.width || !isFinite(duration) || duration <= 0) {
+				return Number(seekSlider.value);
+			}
+
+			var ratio = clamp((event.clientX - sliderRect.left) / sliderRect.width, 0, 1);
+			return ratio * duration;
+		}
+
+		function updateHoverPreviewFromEvent(event) {
+			if (!videoPlayer.src || !isFinite(videoPlayer.duration) || videoPlayer.duration <= 0) {
+				return;
+			}
+
+			hoverPreviewClientX = event.clientX;
+			showHoverPreview(getHoverTimeFromEvent(event));
+		}
+
+		function waitForVideoMetadata(videoElement) {
+			return new Promise(function (resolve, reject) {
+				var onLoadedMetadata = function () {
+					resolve();
+				};
+				var onError = function () {
+					reject(new Error('Unable to load thumbnail source.'));
+				};
+
+				videoElement.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+				videoElement.addEventListener('error', onError, { once: true });
+
+				if (videoElement.readyState >= 1) {
+					resolve();
+				}
+			});
+		}
+
+		function captureFrameFromVideo(videoElement, targetTime) {
+			return new Promise(function (resolve, reject) {
+				var onSeeked = function () {
+					try {
+						var sourceWidth = videoElement.videoWidth || 320;
+						var sourceHeight = videoElement.videoHeight || 180;
+						previewCanvas.width = sourceWidth;
+						previewCanvas.height = sourceHeight;
+						previewContext.drawImage(videoElement, 0, 0, sourceWidth, sourceHeight);
+
+						previewCanvas.toBlob(function (blob) {
+							if (!blob) {
+								reject(new Error('Unable to create thumbnail image.'));
+								return;
+							}
+
+							resolve(URL.createObjectURL(blob));
+						}, 'image/jpeg', 0.82);
+					} catch (error) {
+						reject(error);
+					}
+				};
+
+				var onError = function () {
+					reject(new Error('Failed to extract preview frame.'));
+				};
+
+				videoElement.addEventListener('seeked', onSeeked, { once: true });
+				videoElement.addEventListener('error', onError, { once: true });
+				videoElement.currentTime = Math.min(targetTime, Math.max(0, videoElement.duration || targetTime));
+			});
+		}
+
+		async function generateThumbnailsForSource(sourceUrl, sourceToken, sourceDuration) {
+			if (!sourceUrl || !isFinite(sourceDuration) || sourceDuration <= 0) {
+				return;
+			}
+
+			thumbnailGenerationRunning = true;
+			if (sourceToken === activeSourceToken) {
+				updatePreviewStatus('Generating thumbnails…');
+			}
+
+			var workerVideo = createThumbnailWorkerVideo();
+			workerVideo.style.position = 'absolute';
+			workerVideo.style.left = '-9999px';
+			workerVideo.style.top = '0';
+			workerVideo.style.width = '1px';
+			workerVideo.style.height = '1px';
+			workerVideo.style.opacity = '0';
+			document.body.appendChild(workerVideo);
+			workerVideo.src = sourceUrl;
+			workerVideo.load();
+
+			try {
+				await waitForVideoMetadata(workerVideo);
+				await workerVideo.play().catch(function () {});
+				workerVideo.pause();
+
+				for (var sampleTime = 0; sampleTime < sourceDuration; sampleTime += 2) {
+					if (sourceToken !== activeSourceToken) {
+						break;
+					}
+
+					var captureTime = sampleTime === 0 ? Math.min(0.01, sourceDuration) : Math.min(sampleTime, Math.max(0, sourceDuration - 0.05));
+					var imageUrl = await captureFrameFromVideo(workerVideo, captureTime);
+
+					if (sourceToken !== activeSourceToken) {
+						URL.revokeObjectURL(imageUrl);
+						break;
+					}
+
+					thumbnailCache.push({
+						time: captureTime,
+						imageUrl: imageUrl
+					});
+
+					if (hoverPreviewVisible && hoverPreviewTime !== null) {
+						showHoverPreview(hoverPreviewTime);
+					}
+				}
+			} catch (error) {
+				if (sourceToken === activeSourceToken) {
+					updatePreviewStatus('Preview generation failed');
+				}
+			} finally {
+				if (workerVideo.parentNode) {
+					workerVideo.parentNode.removeChild(workerVideo);
+				}
+				if (sourceToken === activeSourceToken) {
+					thumbnailGenerationRunning = false;
+					if (!thumbnailCache.length) {
+						updatePreviewStatus('Preview unavailable');
+					} else if (hoverPreviewVisible && hoverPreviewTime !== null) {
+						showHoverPreview(hoverPreviewTime);
+					}
+				}
+			}
 		}
 
 		function updateSeekUi() {
@@ -577,9 +871,13 @@
 			event.preventDefault();
 			var file = event.dataTransfer.files[0];
 			var fileURL = URL.createObjectURL(file);
+			activeSourceToken += 1;
+			activeSourceUrl = fileURL;
 
 			dropOverlay.classList.remove('hidden');
 			resetView();
+			hideHoverPreview();
+			clearThumbnailCache();
 			videoPlayer.src = fileURL;
 			videoPlayer.load();
 			updateSeekUi();
@@ -598,6 +896,9 @@
 			updateBaseDisplaySize();
 			applyVideoTransform(false);
 			updateSeekUi();
+			if (videoPlayer.src && videoPlayer.src === activeSourceUrl) {
+				generateThumbnailsForSource(activeSourceUrl, activeSourceToken, videoPlayer.duration);
+			}
 		});
 		videoPlayer.addEventListener('timeupdate', updateSeekUi);
 		videoPlayer.addEventListener('durationchange', updateSeekUi);
@@ -623,6 +924,18 @@
 		seekSlider.addEventListener('pointerup', function () {
 			isSeeking = false;
 			updateSeekUi();
+		});
+
+		seekSlider.addEventListener('pointerenter', function (event) {
+			updateHoverPreviewFromEvent(event);
+		});
+
+		seekSlider.addEventListener('pointermove', function (event) {
+			updateHoverPreviewFromEvent(event);
+		});
+
+		seekSlider.addEventListener('pointerleave', function () {
+			hideHoverPreview();
 		});
 
 		footerBar.addEventListener('mousedown', function (event) {
