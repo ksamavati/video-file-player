@@ -43,6 +43,45 @@
 			backdrop-filter: blur(6px);
 		}
 
+		.footer-bar {
+			position: absolute;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			height: 72px;
+			display: flex;
+			align-items: center;
+			gap: 12px;
+			padding: 10px 16px;
+			z-index: 20;
+			background: rgba(0, 0, 0, 0.2);
+			backdrop-filter: blur(6px);
+			transform: translateY(100%);
+			opacity: 0;
+			pointer-events: none;
+			transition: transform 0.18s ease, opacity 0.18s ease;
+		}
+
+		.footer-bar.visible {
+			transform: translateY(0);
+			opacity: 1;
+			pointer-events: auto;
+		}
+
+		.footer-time {
+			min-width: 96px;
+			font: 500 0.95rem/1 Arial, sans-serif;
+			color: #ffffff;
+			text-align: right;
+		}
+
+		#seek-slider {
+			flex: 1;
+			margin: 0;
+			accent-color: #ffffff;
+			cursor: pointer;
+		}
+
 		#video-container {
 			position: absolute;
 			top: 52px;
@@ -331,6 +370,10 @@
 			</video>
 			<div id="drop-overlay">Drag and Drop Video File</div>
 		</div>
+		<div class="footer-bar" id="footer-bar">
+			<input id="seek-slider" type="range" min="0" max="100" value="0" step="0.1" aria-label="Seek video">
+			<div class="footer-time" id="time-display">0:00 / 0:00</div>
+		</div>
 	</div>
 
 	<script>
@@ -338,6 +381,9 @@
 		var rotateButton = document.getElementById('rotate-video-btn');
 		var videoContainer = document.getElementById('video-container');
 		var dropOverlay = document.getElementById('drop-overlay');
+		var footerBar = document.getElementById('footer-bar');
+		var seekSlider = document.getElementById('seek-slider');
+		var timeDisplay = document.getElementById('time-display');
 		var videoRotation = 0;
 		var zoomLevel = 1;
 		var panX = 0;
@@ -351,6 +397,7 @@
 		var startPanX = 0;
 		var startPanY = 0;
 		var dragThreshold = 5;
+		var isSeeking = false;
 		videoPlayer.controls = false;
 
 		function clamp(value, minValue, maxValue) {
@@ -363,6 +410,61 @@
 
 		function hidePlaceholder() {
 			dropOverlay.classList.add('hidden');
+		}
+
+		function formatTime(seconds) {
+			if (!isFinite(seconds) || seconds < 0) {
+				return '0:00';
+			}
+
+			var totalSeconds = Math.floor(seconds);
+			var hours = Math.floor(totalSeconds / 3600);
+			var minutes = Math.floor((totalSeconds % 3600) / 60);
+			var remainingSeconds = totalSeconds % 60;
+
+			if (hours > 0) {
+				return hours + ':' + String(minutes).padStart(2, '0') + ':' + String(remainingSeconds).padStart(2, '0');
+			}
+
+			return minutes + ':' + String(remainingSeconds).padStart(2, '0');
+		}
+
+		function updateSeekUi() {
+			var duration = videoPlayer.duration;
+			var currentTime = videoPlayer.currentTime;
+
+			if (isFinite(duration) && duration > 0) {
+				seekSlider.max = duration;
+				if (!isSeeking) {
+					seekSlider.value = currentTime;
+				}
+				timeDisplay.textContent = formatTime(currentTime) + ' / ' + formatTime(duration);
+				return;
+			}
+
+			seekSlider.max = 100;
+			if (!isSeeking) {
+				seekSlider.value = 0;
+			}
+			timeDisplay.textContent = '0:00 / 0:00';
+		}
+
+		function syncSeekToVideo() {
+			var nextTime = Number(seekSlider.value);
+
+			if (!isFinite(videoPlayer.duration) || videoPlayer.duration <= 0 || !isFinite(nextTime)) {
+				return;
+			}
+
+			videoPlayer.currentTime = clamp(nextTime, 0, videoPlayer.duration);
+			updateSeekUi();
+		}
+
+		function updateFooterVisibility(clientY) {
+			var footerHeight = footerBar.offsetHeight;
+			var shouldShow = clientY >= window.innerHeight - footerHeight;
+
+			footerBar.classList.toggle('visible', shouldShow);
 		}
 
 		function updateBaseDisplaySize() {
@@ -448,6 +550,7 @@
 			resetView();
 			videoPlayer.src = fileURL;
 			videoPlayer.load();
+			updateSeekUi();
 			videoPlayer.play().catch(function () {});
 		}
 
@@ -462,6 +565,44 @@
 			hidePlaceholder();
 			updateBaseDisplaySize();
 			applyVideoTransform(false);
+			updateSeekUi();
+		});
+		videoPlayer.addEventListener('timeupdate', updateSeekUi);
+		videoPlayer.addEventListener('durationchange', updateSeekUi);
+		videoPlayer.addEventListener('ended', updateSeekUi);
+		videoPlayer.addEventListener('emptied', updateSeekUi);
+
+		seekSlider.addEventListener('input', function () {
+			isSeeking = true;
+			syncSeekToVideo();
+		});
+
+		seekSlider.addEventListener('change', function () {
+			syncSeekToVideo();
+			isSeeking = false;
+			updateSeekUi();
+		});
+
+		seekSlider.addEventListener('pointerdown', function (event) {
+			isSeeking = true;
+			event.stopPropagation();
+		});
+
+		seekSlider.addEventListener('pointerup', function () {
+			isSeeking = false;
+			updateSeekUi();
+		});
+
+		footerBar.addEventListener('mousedown', function (event) {
+			event.stopPropagation();
+		});
+
+		document.addEventListener('mousemove', function (event) {
+			updateFooterVisibility(event.clientY);
+		});
+
+		document.addEventListener('mouseleave', function () {
+			footerBar.classList.remove('visible');
 		});
 
 		videoContainer.addEventListener('wheel', function (event) {
@@ -556,6 +697,7 @@
 		window.addEventListener('resize', function () {
 			updateBaseDisplaySize();
 			applyVideoTransform(false);
+			updateFooterVisibility(window.innerHeight);
 		});
 
 		if (rotateButton) {
@@ -581,6 +723,7 @@
 		window.onload = function () {
 			const savedTheme = localStorage.getItem('theme') || 'dark';
 			document.body.classList.toggle('light-mode', savedTheme === 'light');
+			updateSeekUi();
 		}
 	</script>
 	<script type="text/javascript" src="dark-toggle-script.js"></script>
