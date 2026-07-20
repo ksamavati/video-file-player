@@ -947,6 +947,10 @@
 						imageUrl: imageUrl
 					});
 
+					if (isThumbnailBrowserOpen) {
+						renderThumbnailBrowser();
+					}
+
 					if (hoverPreviewVisible && hoverPreviewTime !== null) {
 						showHoverPreview(hoverPreviewTime);
 					}
