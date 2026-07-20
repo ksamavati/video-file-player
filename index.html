@@ -446,6 +446,49 @@
 			right: auto;
 		}
 
+		@media (hover: none) and (pointer: coarse) {
+			.header-bar {
+				height: calc(68px + env(safe-area-inset-top, 0px));
+				padding: calc(10px + env(safe-area-inset-top, 0px)) 18px 10px;
+				gap: 14px;
+			}
+
+			.footer-bar {
+				height: calc(132px + env(safe-area-inset-bottom, 0px));
+				padding: 44px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+				gap: 14px;
+			}
+
+			.footer-time {
+				min-width: 108px;
+				font-size: 1rem;
+			}
+
+			#seek-slider {
+				min-height: 32px;
+			}
+
+			#rotate-video-btn {
+				padding: 12px 18px;
+				font-size: 0.95rem;
+			}
+
+			#thumbnail-browser-btn {
+				padding: 11px 14px;
+				font-size: 0.9rem;
+			}
+
+			.ab-repeat-button {
+				width: 38px;
+				height: 38px;
+				font-size: 0.95rem;
+			}
+
+			.ab-repeat-time {
+				font-size: 0.88rem;
+			}
+		}
+
 		/* Light Mode Styles */
 		/* body.light-mode {
 			background-color: #FFFFFF;
@@ -724,6 +767,8 @@
 		var dragThreshold = 5;
 		var isSeeking = false;
 		var lastPointerY = null;
+		var mobileHeaderPinnedVisible = false;
+		var mobileFooterPinnedVisible = false;
 		var touchMode = 'none';
 		var touchStartX = 0;
 		var touchStartY = 0;
@@ -734,6 +779,13 @@
 		var touchPinchStartZoom = 1;
 		var touchTapThreshold = 8;
 		var touchPinchThreshold = 6;
+		var touchStartTarget = null;
+		var lastTapTimestamp = 0;
+		var lastTapX = 0;
+		var lastTapY = 0;
+		var singleTapTimerId = null;
+		var doubleTapDelay = 280;
+		var doubleTapDistanceThreshold = 24;
 		var activeSourceToken = 0;
 		var activeSourceUrl = '';
 		var thumbnailCache = [];
@@ -1226,6 +1278,11 @@
 		}
 
 		function updateFooterVisibility(clientY) {
+			if (isMobileTouchUi()) {
+				footerBar.classList.toggle('visible', mobileFooterPinnedVisible);
+				return;
+			}
+
 			if (typeof clientY !== 'number') {
 				footerBar.classList.remove('visible');
 				return;
@@ -1238,6 +1295,11 @@
 		}
 
 		function updateHeaderVisibility(clientY) {
+			if (isMobileTouchUi()) {
+				headerBar.classList.toggle('visible', mobileHeaderPinnedVisible);
+				return;
+			}
+
 			if (typeof clientY !== 'number') {
 				headerBar.classList.remove('visible');
 				return;
@@ -1318,6 +1380,41 @@
 			videoPlayer.style.transformOrigin = 'center center';
 		}
 
+		function isMobileTouchUi() {
+			if (!window.matchMedia) {
+				return false;
+			}
+
+			return window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+		}
+
+		function isTapOnInteractiveControl(target) {
+			return Boolean(target && target.closest && target.closest('button, input, select, textarea, [role="button"], a'));
+		}
+
+		function handleMobileOverlayToggleTap(touchY, target) {
+			if (!isMobileTouchUi() || isTapOnInteractiveControl(target)) {
+				return false;
+			}
+
+			var topBoundary = window.innerHeight * 0.25;
+			var bottomBoundary = window.innerHeight * 0.75;
+
+			if (touchY <= topBoundary) {
+				mobileHeaderPinnedVisible = !mobileHeaderPinnedVisible;
+				updateHeaderVisibility();
+				return true;
+			}
+
+			if (touchY >= bottomBoundary) {
+				mobileFooterPinnedVisible = !mobileFooterPinnedVisible;
+				updateFooterVisibility();
+				return true;
+			}
+
+			return false;
+		}
+
 		function getTouchDistance(touchA, touchB) {
 			return Math.hypot(touchB.clientX - touchA.clientX, touchB.clientY - touchA.clientY);
 		}
@@ -1371,6 +1468,44 @@
 			}
 
 			videoPlayer.pause();
+		}
+
+		function toggleFullscreen() {
+			if (document.fullscreenElement) {
+				document.exitFullscreen().catch(function () {});
+				return;
+			}
+
+			document.documentElement.requestFullscreen().catch(function () {});
+		}
+
+		function clearSingleTapTimer() {
+			if (singleTapTimerId !== null) {
+				window.clearTimeout(singleTapTimerId);
+				singleTapTimerId = null;
+			}
+		}
+
+		function handleMobileCenterTapAction(touchX, touchY) {
+			var now = Date.now();
+			var isWithinDoubleTapWindow = (now - lastTapTimestamp) <= doubleTapDelay;
+			var isNearLastTap = Math.hypot(touchX - lastTapX, touchY - lastTapY) <= doubleTapDistanceThreshold;
+
+			if (isWithinDoubleTapWindow && isNearLastTap) {
+				clearSingleTapTimer();
+				lastTapTimestamp = 0;
+				toggleFullscreen();
+				return;
+			}
+
+			lastTapTimestamp = now;
+			lastTapX = touchX;
+			lastTapY = touchY;
+			clearSingleTapTimer();
+			singleTapTimerId = window.setTimeout(function () {
+				togglePlayback();
+				singleTapTimerId = null;
+			}, doubleTapDelay);
 		}
 
 		function loadSelectedVideo(file) {
@@ -1613,6 +1748,8 @@
 				return;
 			}
 
+			touchStartTarget = event.target;
+
 			if (event.touches.length === 1) {
 				var firstTouch = event.touches[0];
 				touchMode = 'pan';
@@ -1696,10 +1833,17 @@
 			if (event.touches.length === 0) {
 				videoPlayer.classList.remove('dragging');
 				if (touchMode === 'pan' && !touchMoved) {
-					togglePlayback();
+					var tapX = touchStartX;
+					var tapY = touchStartY;
+					var handledOverlayToggle = handleMobileOverlayToggleTap(tapY, touchStartTarget || event.target);
+
+					if (!handledOverlayToggle) {
+						handleMobileCenterTapAction(tapX, tapY);
+					}
 				}
 				touchMode = 'none';
 				touchMoved = false;
+				touchStartTarget = null;
 				event.preventDefault();
 			}
 		}, { passive: false });
@@ -1708,6 +1852,7 @@
 			videoPlayer.classList.remove('dragging');
 			touchMode = 'none';
 			touchMoved = false;
+			touchStartTarget = null;
 		}, { passive: true });
 
 		videoPlayer.addEventListener('click', function (event) {
@@ -1718,12 +1863,7 @@
 		videoPlayer.addEventListener('dblclick', function (event) {
 			event.preventDefault();
 			event.stopPropagation();
-
-			if (document.fullscreenElement) {
-				document.exitFullscreen().catch(function () {});
-			} else {
-				document.documentElement.requestFullscreen().catch(function () {});
-			}
+			toggleFullscreen();
 		});
 
 		window.addEventListener('resize', function () {
