@@ -85,6 +85,144 @@
 			text-align: right;
 		}
 
+		#thumbnail-browser-btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 9px 12px;
+			border: none;
+			border-radius: 6px;
+			background: rgba(255, 255, 255, 0.12);
+			color: #ffffff;
+			font: 600 0.85rem/1 Arial, sans-serif;
+			cursor: pointer;
+			white-space: nowrap;
+			transition: background-color 0.16s ease, transform 0.16s ease;
+		}
+
+		#thumbnail-browser-btn:hover {
+			background: rgba(255, 255, 255, 0.2);
+			transform: translateY(-1px);
+		}
+
+		#thumbnail-browser-btn:disabled {
+			opacity: 0.45;
+			cursor: not-allowed;
+			transform: none;
+		}
+
+		#thumbnail-browser-overlay {
+			position: fixed;
+			inset: 0;
+			z-index: 90;
+			display: none;
+			flex-direction: column;
+			background: rgba(6, 8, 14, 0.94);
+			-webkit-backdrop-filter: blur(10px);
+			backdrop-filter: blur(10px);
+			color: #ffffff;
+		}
+
+		#thumbnail-browser-overlay.visible {
+			display: flex;
+		}
+
+		.thumbnail-browser__header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+			padding: 18px 20px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+			background: rgba(0, 0, 0, 0.28);
+			flex: 0 0 auto;
+		}
+
+		.thumbnail-browser__title {
+			font: 700 1rem/1.2 Arial, sans-serif;
+			letter-spacing: 0.01em;
+		}
+
+		.thumbnail-browser__subtitle {
+			margin-top: 4px;
+			font: 500 0.8rem/1.2 Arial, sans-serif;
+			color: rgba(255, 255, 255, 0.68);
+		}
+
+		.thumbnail-browser__close {
+			padding: 10px 14px;
+			border: none;
+			border-radius: 999px;
+			background: rgba(255, 255, 255, 0.14);
+			color: #ffffff;
+			font: 600 0.85rem/1 Arial, sans-serif;
+			cursor: pointer;
+		}
+
+		.thumbnail-browser__close:hover {
+			background: rgba(255, 255, 255, 0.22);
+		}
+
+		.thumbnail-browser__body {
+			flex: 1 1 auto;
+			overflow-y: auto;
+			padding: 20px;
+		}
+
+		.thumbnail-browser__grid {
+			display: grid;
+			grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+			gap: 16px;
+			align-items: start;
+		}
+
+		.thumbnail-browser__empty {
+			padding: 32px 16px;
+			text-align: center;
+			font: 500 0.95rem/1.4 Arial, sans-serif;
+			color: rgba(255, 255, 255, 0.72);
+		}
+
+		.thumbnail-card {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+			padding: 10px;
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 14px;
+			background: rgba(255, 255, 255, 0.06);
+			cursor: pointer;
+			transition: transform 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+		}
+
+		.thumbnail-card:hover {
+			transform: translateY(-2px);
+			border-color: rgba(255, 255, 255, 0.2);
+			background: rgba(255, 255, 255, 0.09);
+		}
+
+		.thumbnail-card__image {
+			width: 100%;
+			height: auto;
+			max-height: 220px;
+			object-fit: contain;
+			border-radius: 10px;
+			background: #000;
+			display: block;
+		}
+
+		.thumbnail-card__label {
+			font: 600 0.82rem/1.2 Arial, sans-serif;
+			color: #ffffff;
+			text-align: center;
+		}
+
+		.thumbnail-card__caption {
+			font: 500 0.75rem/1.2 Arial, sans-serif;
+			color: rgba(255, 255, 255, 0.7);
+			text-align: center;
+		}
+
 		.seek-preview {
 			position: absolute;
 			left: 16px;
@@ -431,6 +569,7 @@
 			<div id="drop-overlay">Drag and Drop Video File</div>
 		</div>
 		<div class="footer-bar" id="footer-bar">
+			<button id="thumbnail-browser-btn" type="button">Thumbnails</button>
 			<input id="seek-slider" type="range" min="0" max="100" value="0" step="0.1" aria-label="Seek video">
 			<div class="footer-time" id="time-display">0:00 / 0:00</div>
 		</div>
@@ -438,6 +577,19 @@
 			<img class="seek-preview__thumb" id="seek-preview-thumb" alt="Video preview thumbnail">
 			<div class="seek-preview__label" id="seek-preview-label">0:00</div>
 			<div class="seek-preview__status" id="seek-preview-status">Generating thumbnails…</div>
+		</div>
+		<div id="thumbnail-browser-overlay" aria-hidden="true">
+			<div class="thumbnail-browser__header">
+				<div>
+					<div class="thumbnail-browser__title">Video Thumbnails</div>
+					<div class="thumbnail-browser__subtitle" id="thumbnail-browser-subtitle">0 thumbnails</div>
+				</div>
+				<button class="thumbnail-browser__close" id="thumbnail-browser-close" type="button">Close</button>
+			</div>
+			<div class="thumbnail-browser__body">
+				<div class="thumbnail-browser__grid" id="thumbnail-browser-grid"></div>
+				<div class="thumbnail-browser__empty" id="thumbnail-browser-empty">No thumbnails available yet.</div>
+			</div>
 		</div>
 	</div>
 
@@ -476,6 +628,13 @@
 		var hoverPreviewVisible = false;
 		var hoverPreviewTime = null;
 		var hoverPreviewClientX = null;
+		var isThumbnailBrowserOpen = false;
+		var thumbnailBrowserButton = document.getElementById('thumbnail-browser-btn');
+		var thumbnailBrowserOverlay = document.getElementById('thumbnail-browser-overlay');
+		var thumbnailBrowserClose = document.getElementById('thumbnail-browser-close');
+		var thumbnailBrowserGrid = document.getElementById('thumbnail-browser-grid');
+		var thumbnailBrowserEmpty = document.getElementById('thumbnail-browser-empty');
+		var thumbnailBrowserSubtitle = document.getElementById('thumbnail-browser-subtitle');
 		var previewCanvas = document.createElement('canvas');
 		var previewContext = previewCanvas.getContext('2d');
 		videoPlayer.controls = false;
@@ -545,6 +704,77 @@
 			seekPreviewThumb.removeAttribute('src');
 			seekPreviewLabel.textContent = '0:00';
 			updatePreviewStatus('Generating thumbnails…');
+			renderThumbnailBrowser();
+		}
+
+		function openThumbnailBrowser() {
+			if (!thumbnailBrowserOverlay) {
+				return;
+			}
+
+			isThumbnailBrowserOpen = true;
+			renderThumbnailBrowser();
+			thumbnailBrowserOverlay.classList.add('visible');
+			thumbnailBrowserOverlay.setAttribute('aria-hidden', 'false');
+		}
+
+		function closeThumbnailBrowser() {
+			if (!thumbnailBrowserOverlay) {
+				return;
+			}
+
+			isThumbnailBrowserOpen = false;
+			thumbnailBrowserOverlay.classList.remove('visible');
+			thumbnailBrowserOverlay.setAttribute('aria-hidden', 'true');
+		}
+
+		function seekToThumbnail(thumbnail) {
+			if (!thumbnail) {
+				return;
+			}
+
+			videoPlayer.currentTime = clamp(thumbnail.time, 0, videoPlayer.duration || thumbnail.time);
+			updateSeekUi();
+		}
+
+		function renderThumbnailBrowser() {
+			if (!thumbnailBrowserGrid || !thumbnailBrowserEmpty || !thumbnailBrowserSubtitle) {
+				return;
+			}
+
+			thumbnailBrowserGrid.textContent = '';
+			thumbnailBrowserSubtitle.textContent = String(thumbnailCache.length) + ' thumbnail' + (thumbnailCache.length === 1 ? '' : 's');
+			thumbnailBrowserEmpty.hidden = thumbnailCache.length > 0;
+
+			for (var index = 0; index < thumbnailCache.length; index += 1) {
+				(function (thumbnail) {
+					var card = document.createElement('button');
+					card.type = 'button';
+					card.className = 'thumbnail-card';
+
+					var image = document.createElement('img');
+					image.className = 'thumbnail-card__image';
+					image.src = thumbnail.imageUrl;
+					image.alt = 'Thumbnail at ' + formatTime(thumbnail.time);
+
+					var label = document.createElement('div');
+					label.className = 'thumbnail-card__label';
+					label.textContent = formatTime(thumbnail.time);
+
+					var caption = document.createElement('div');
+					caption.className = 'thumbnail-card__caption';
+					caption.textContent = 'Click to jump to this frame';
+
+					card.appendChild(image);
+					card.appendChild(label);
+					card.appendChild(caption);
+					card.addEventListener('click', function () {
+						closeThumbnailBrowser();
+						seekToThumbnail(thumbnail);
+					});
+					thumbnailBrowserGrid.appendChild(card);
+				})(thumbnailCache[index]);
+			}
 		}
 
 		function findNearestThumbnail(timeInSeconds) {
@@ -731,6 +961,7 @@
 				}
 				if (sourceToken === activeSourceToken) {
 					thumbnailGenerationRunning = false;
+					renderThumbnailBrowser();
 					if (!thumbnailCache.length) {
 						updatePreviewStatus('Preview unavailable');
 					} else if (hoverPreviewVisible && hoverPreviewTime !== null) {
@@ -938,6 +1169,34 @@
 
 		seekSlider.addEventListener('pointerleave', function () {
 			hideHoverPreview();
+		});
+
+		if (thumbnailBrowserButton) {
+			thumbnailBrowserButton.addEventListener('click', function () {
+				if (isThumbnailBrowserOpen) {
+					closeThumbnailBrowser();
+				} else {
+					openThumbnailBrowser();
+				}
+			});
+		}
+
+		if (thumbnailBrowserClose) {
+			thumbnailBrowserClose.addEventListener('click', closeThumbnailBrowser);
+		}
+
+		if (thumbnailBrowserOverlay) {
+			thumbnailBrowserOverlay.addEventListener('click', function (event) {
+				if (event.target === thumbnailBrowserOverlay) {
+					closeThumbnailBrowser();
+				}
+			});
+		}
+
+		document.addEventListener('keydown', function (event) {
+			if (event.key === 'Escape' && isThumbnailBrowserOpen) {
+				closeThumbnailBrowser();
+			}
 		});
 
 		footerBar.addEventListener('mousedown', function (event) {
