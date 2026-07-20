@@ -400,8 +400,10 @@
 			position: absolute;
 			inset: 0;
 			display: flex;
+			flex-direction: column;
 			align-items: center;
 			justify-content: center;
+			gap: 12px;
 			padding: 24px;
 			font-size: 1.25rem;
 			font-weight: 600;
@@ -410,6 +412,28 @@
 			background: rgba(0, 0, 0, 0.45);
 			z-index: 10;
 			pointer-events: none;
+		}
+
+		#open-file-btn {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 10px 16px;
+			border: none;
+			border-radius: 6px;
+			background: rgba(255, 255, 255, 0.9);
+			color: #111111;
+			font: 600 0.9rem/1 Arial, sans-serif;
+			cursor: pointer;
+			pointer-events: auto;
+		}
+
+		#open-file-btn:hover {
+			background: #ffffff;
+		}
+
+		#file-picker-input {
+			display: none;
 		}
 
 		#drop-overlay.hidden {
@@ -625,7 +649,11 @@
 			<video id="video-player" playsinline>
 				Your browser does not support the video tag.
 			</video>
-			<div id="drop-overlay">Drag and Drop Video File</div>
+			<div id="drop-overlay">
+				<div>Drag and Drop Video File</div>
+				<button id="open-file-btn" type="button">Open Video File</button>
+				<input id="file-picker-input" type="file" accept="video/*">
+			</div>
 		</div>
 		<div class="footer-bar" id="footer-bar">
 			<div class="ab-repeat-controls" id="ab-repeat-controls">
@@ -667,6 +695,8 @@
 		var rotateButton = document.getElementById('rotate-video-btn');
 		var videoContainer = document.getElementById('video-container');
 		var dropOverlay = document.getElementById('drop-overlay');
+		var openFileButton = document.getElementById('open-file-btn');
+		var filePickerInput = document.getElementById('file-picker-input');
 		var headerBar = document.querySelector('.header-bar');
 		var footerBar = document.getElementById('footer-bar');
 		var seekSlider = document.getElementById('seek-slider');
@@ -694,6 +724,16 @@
 		var dragThreshold = 5;
 		var isSeeking = false;
 		var lastPointerY = null;
+		var touchMode = 'none';
+		var touchStartX = 0;
+		var touchStartY = 0;
+		var touchPanStartX = 0;
+		var touchPanStartY = 0;
+		var touchMoved = false;
+		var touchPinchStartDistance = 0;
+		var touchPinchStartZoom = 1;
+		var touchTapThreshold = 8;
+		var touchPinchThreshold = 6;
 		var activeSourceToken = 0;
 		var activeSourceUrl = '';
 		var thumbnailCache = [];
@@ -1278,6 +1318,45 @@
 			videoPlayer.style.transformOrigin = 'center center';
 		}
 
+		function getTouchDistance(touchA, touchB) {
+			return Math.hypot(touchB.clientX - touchA.clientX, touchB.clientY - touchA.clientY);
+		}
+
+		function getTouchMidpoint(touchA, touchB) {
+			return {
+				x: (touchA.clientX + touchB.clientX) / 2,
+				y: (touchA.clientY + touchB.clientY) / 2
+			};
+		}
+
+		function getContainerRelativePoint(clientX, clientY) {
+			var rect = videoContainer.getBoundingClientRect();
+			return {
+				x: clientX - (rect.left + rect.width / 2),
+				y: clientY - (rect.top + rect.height / 2)
+			};
+		}
+
+		function zoomAroundPoint(targetZoom, focusX, focusY) {
+			var minZoomLevel = getMinZoomLevel();
+			var nextZoom = clamp(targetZoom, minZoomLevel, 4);
+
+			if (!isFinite(nextZoom) || nextZoom <= 0 || Math.abs(nextZoom - zoomLevel) < 0.0001) {
+				return;
+			}
+
+			var previousZoom = zoomLevel;
+			var zoomRatio = nextZoom / previousZoom;
+			panX = panX + (1 - zoomRatio) * (focusX - panX);
+			panY = panY + (1 - zoomRatio) * (focusY - panY);
+			zoomLevel = nextZoom;
+			applyVideoTransform(false);
+		}
+
+		function shouldIgnoreGestureTarget(target) {
+			return headerBar.contains(target) || footerBar.contains(target) || (thumbnailBrowserOverlay && thumbnailBrowserOverlay.classList.contains('visible') && thumbnailBrowserOverlay.contains(target));
+		}
+
 		function resetView() {
 			zoomLevel = 1;
 			panX = 0;
@@ -1294,9 +1373,11 @@
 			videoPlayer.pause();
 		}
 
-		function handleDrop(event) {
-			event.preventDefault();
-			var file = event.dataTransfer.files[0];
+		function loadSelectedVideo(file) {
+			if (!file) {
+				return;
+			}
+
 			var fileURL = URL.createObjectURL(file);
 			activeSourceToken += 1;
 			activeSourceUrl = fileURL;
@@ -1312,12 +1393,29 @@
 			videoPlayer.play().catch(function () {});
 		}
 
+		function handleDrop(event) {
+			event.preventDefault();
+			var file = event.dataTransfer.files[0];
+			loadSelectedVideo(file);
+		}
+
 		function handleDragOver(event) {
 			event.preventDefault();
 		}
 
 		videoContainer.addEventListener('drop', handleDrop);
 		videoContainer.addEventListener('dragover', handleDragOver);
+		if (openFileButton && filePickerInput) {
+			openFileButton.addEventListener('click', function () {
+				filePickerInput.click();
+			});
+
+			filePickerInput.addEventListener('change', function (event) {
+				var selectedFile = event.target.files && event.target.files[0];
+				loadSelectedVideo(selectedFile);
+				event.target.value = '';
+			});
+		}
 		videoPlayer.addEventListener('loadeddata', hidePlaceholder);
 		videoPlayer.addEventListener('loadedmetadata', function () {
 			hidePlaceholder();
@@ -1509,6 +1607,109 @@
 			isDragging = false;
 			videoPlayer.classList.remove('dragging');
 		});
+
+		videoContainer.addEventListener('touchstart', function (event) {
+			if (!videoPlayer.src || !videoPlayer.videoWidth || shouldIgnoreGestureTarget(event.target)) {
+				return;
+			}
+
+			if (event.touches.length === 1) {
+				var firstTouch = event.touches[0];
+				touchMode = 'pan';
+				touchStartX = firstTouch.clientX;
+				touchStartY = firstTouch.clientY;
+				touchPanStartX = panX;
+				touchPanStartY = panY;
+				touchMoved = false;
+				videoPlayer.classList.add('dragging');
+			} else if (event.touches.length >= 2) {
+				var touchA = event.touches[0];
+				var touchB = event.touches[1];
+				touchMode = 'pinch';
+				touchPinchStartDistance = getTouchDistance(touchA, touchB);
+				touchPinchStartZoom = zoomLevel;
+				touchMoved = false;
+				videoPlayer.classList.add('dragging');
+			}
+
+			event.preventDefault();
+		}, { passive: false });
+
+		videoContainer.addEventListener('touchmove', function (event) {
+			if (!videoPlayer.src || !videoPlayer.videoWidth || shouldIgnoreGestureTarget(event.target)) {
+				return;
+			}
+
+			if (touchMode === 'pinch' && event.touches.length >= 2) {
+				var touchA = event.touches[0];
+				var touchB = event.touches[1];
+				var currentDistance = getTouchDistance(touchA, touchB);
+				var midpoint = getTouchMidpoint(touchA, touchB);
+				var focusPoint = getContainerRelativePoint(midpoint.x, midpoint.y);
+
+				if (touchPinchStartDistance > 0) {
+					var pinchScale = currentDistance / touchPinchStartDistance;
+					zoomAroundPoint(touchPinchStartZoom * pinchScale, focusPoint.x, focusPoint.y);
+				}
+
+				if (Math.abs(currentDistance - touchPinchStartDistance) > touchPinchThreshold) {
+					touchMoved = true;
+				}
+				event.preventDefault();
+				return;
+			}
+
+			if (touchMode === 'pan' && event.touches.length === 1) {
+				var touch = event.touches[0];
+				var deltaX = touch.clientX - touchStartX;
+				var deltaY = touch.clientY - touchStartY;
+				var movedDistance = Math.hypot(deltaX, deltaY);
+
+				if (movedDistance > touchTapThreshold) {
+					touchMoved = true;
+				}
+
+				panX = touchPanStartX + deltaX;
+				panY = touchPanStartY + deltaY;
+				applyVideoTransform(false);
+				event.preventDefault();
+			}
+		}, { passive: false });
+
+		videoContainer.addEventListener('touchend', function (event) {
+			if (!videoPlayer.src || !videoPlayer.videoWidth) {
+				return;
+			}
+
+			if (touchMode === 'pinch' && event.touches.length === 1) {
+				var remainingTouch = event.touches[0];
+				touchMode = 'pan';
+				touchStartX = remainingTouch.clientX;
+				touchStartY = remainingTouch.clientY;
+				touchPanStartX = panX;
+				touchPanStartY = panY;
+				touchMoved = true;
+				event.preventDefault();
+				return;
+			}
+
+			if (event.touches.length === 0) {
+				videoPlayer.classList.remove('dragging');
+				if (touchMode === 'pan' && !touchMoved) {
+					togglePlayback();
+				}
+				touchMode = 'none';
+				touchMoved = false;
+				event.preventDefault();
+			}
+		}, { passive: false });
+
+		videoContainer.addEventListener('touchcancel', function () {
+			videoPlayer.classList.remove('dragging');
+			touchMode = 'none';
+			touchMoved = false;
+		}, { passive: true });
+
 		videoPlayer.addEventListener('click', function (event) {
 			event.preventDefault();
 			event.stopPropagation();
