@@ -58,11 +58,11 @@
 			left: 0;
 			right: 0;
 			bottom: 0;
-			height: 72px;
+			height: 96px;
 			display: flex;
 			align-items: center;
 			gap: 12px;
-			padding: 10px 16px;
+			padding: 34px 16px 10px;
 			z-index: 20;
 			background: rgba(0, 0, 0, 0.2);
 			backdrop-filter: blur(6px);
@@ -83,6 +83,60 @@
 			font: 500 0.95rem/1 Arial, sans-serif;
 			color: #ffffff;
 			text-align: right;
+		}
+
+		.ab-repeat-controls {
+			position: absolute;
+			top: 10px;
+			left: 50%;
+			transform: translateX(-50%);
+			display: flex;
+			align-items: center;
+			gap: 14px;
+			z-index: 1;
+		}
+
+		.ab-repeat-marker {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+		}
+
+		.ab-repeat-button {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			width: 34px;
+			height: 34px;
+			padding: 0;
+			border: none;
+			border-radius: 999px;
+			background: rgba(255, 255, 255, 0.12);
+			color: #ffffff;
+			font: 700 0.9rem/1 Arial, sans-serif;
+			cursor: pointer;
+			transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+		}
+
+		.ab-repeat-button:hover {
+			background: rgba(255, 255, 255, 0.2);
+			transform: translateY(-1px);
+		}
+
+		.ab-repeat-button.is-set {
+			background: #2d8a54;
+			color: #ffffff;
+		}
+
+		.ab-repeat-button.is-set:hover {
+			background: #35a165;
+		}
+
+		.ab-repeat-time {
+			min-width: 52px;
+			font: 500 0.82rem/1 Arial, sans-serif;
+			color: rgba(255, 255, 255, 0.78);
+			white-space: nowrap;
 		}
 
 		#thumbnail-browser-btn {
@@ -231,7 +285,7 @@
 		.seek-preview {
 			position: absolute;
 			left: 16px;
-			bottom: 82px;
+			bottom: 106px;
 			display: flex;
 			flex-direction: column;
 			gap: 6px;
@@ -574,6 +628,16 @@
 			<div id="drop-overlay">Drag and Drop Video File</div>
 		</div>
 		<div class="footer-bar" id="footer-bar">
+			<div class="ab-repeat-controls" id="ab-repeat-controls">
+				<div class="ab-repeat-marker">
+					<button id="ab-repeat-a-btn" class="ab-repeat-button" type="button" aria-label="Set A repeat marker">A</button>
+					<div class="ab-repeat-time" id="ab-repeat-a-time">Unset</div>
+				</div>
+				<div class="ab-repeat-marker">
+					<button id="ab-repeat-b-btn" class="ab-repeat-button" type="button" aria-label="Set B repeat marker">B</button>
+					<div class="ab-repeat-time" id="ab-repeat-b-time">Unset</div>
+				</div>
+			</div>
 			<button id="thumbnail-browser-btn" type="button">Jump to Frame</button>
 			<input id="seek-slider" type="range" min="0" max="100" value="0" step="0.1" aria-label="Seek video">
 			<div class="footer-time" id="time-display">0:00 / 0:00</div>
@@ -607,6 +671,10 @@
 		var footerBar = document.getElementById('footer-bar');
 		var seekSlider = document.getElementById('seek-slider');
 		var timeDisplay = document.getElementById('time-display');
+		var repeatAButton = document.getElementById('ab-repeat-a-btn');
+		var repeatATime = document.getElementById('ab-repeat-a-time');
+		var repeatBButton = document.getElementById('ab-repeat-b-btn');
+		var repeatBTime = document.getElementById('ab-repeat-b-time');
 		var seekPreview = document.getElementById('seek-preview');
 		var seekPreviewThumb = document.getElementById('seek-preview-thumb');
 		var seekPreviewLabel = document.getElementById('seek-preview-label');
@@ -634,6 +702,8 @@
 		var hoverPreviewTime = null;
 		var hoverPreviewClientX = null;
 		var isThumbnailBrowserOpen = false;
+		var repeatMarkerA = null;
+		var repeatMarkerB = null;
 		var thumbnailBrowserButton = document.getElementById('thumbnail-browser-btn');
 		var thumbnailBrowserOverlay = document.getElementById('thumbnail-browser-overlay');
 		var thumbnailBrowserClose = document.getElementById('thumbnail-browser-close');
@@ -1045,6 +1115,65 @@
 			timeDisplay.textContent = '0:00 / 0:00';
 		}
 
+		function updateRepeatMarkersUi() {
+			repeatAButton.classList.toggle('is-set', repeatMarkerA !== null);
+			repeatBButton.classList.toggle('is-set', repeatMarkerB !== null);
+			repeatATime.textContent = repeatMarkerA === null ? 'Unset' : formatTime(repeatMarkerA);
+			repeatBTime.textContent = repeatMarkerB === null ? 'Unset' : formatTime(repeatMarkerB);
+		}
+
+		function resetRepeatMarkers() {
+			repeatMarkerA = null;
+			repeatMarkerB = null;
+			updateRepeatMarkersUi();
+		}
+
+		function setRepeatMarker(markerName) {
+			if (!isFinite(videoPlayer.duration) || videoPlayer.duration <= 0) {
+				return;
+			}
+
+			var currentTime = clamp(videoPlayer.currentTime, 0, videoPlayer.duration);
+
+			if (markerName === 'A') {
+				repeatMarkerA = repeatMarkerA === null ? currentTime : null;
+			} else {
+				repeatMarkerB = repeatMarkerB === null ? currentTime : null;
+			}
+
+			updateRepeatMarkersUi();
+		}
+
+		function getRepeatLoopStart() {
+			if (repeatMarkerA === null || repeatMarkerB === null || repeatMarkerA >= repeatMarkerB) {
+				return null;
+			}
+
+			return repeatMarkerA;
+		}
+
+		function getRepeatLoopEnd() {
+			if (repeatMarkerA === null || repeatMarkerB === null || repeatMarkerA >= repeatMarkerB) {
+				return null;
+			}
+
+			return repeatMarkerB;
+		}
+
+		function enforceRepeatLoop() {
+			var loopStart = getRepeatLoopStart();
+			var loopEnd = getRepeatLoopEnd();
+
+			if (loopStart === null || loopEnd === null || videoPlayer.seeking) {
+				return;
+			}
+
+			if (videoPlayer.currentTime + 0.05 >= loopEnd) {
+				videoPlayer.currentTime = loopStart;
+				updateSeekUi();
+			}
+		}
+
 		function syncSeekToVideo() {
 			var nextTime = Number(seekSlider.value);
 
@@ -1174,6 +1303,7 @@
 
 			dropOverlay.classList.remove('hidden');
 			resetView();
+			resetRepeatMarkers();
 			hideHoverPreview();
 			clearThumbnailCache();
 			videoPlayer.src = fileURL;
@@ -1194,14 +1324,21 @@
 			updateBaseDisplaySize();
 			applyVideoTransform(false);
 			updateSeekUi();
+			updateRepeatMarkersUi();
 			if (videoPlayer.src && videoPlayer.src === activeSourceUrl) {
 				generateThumbnailsForSource(activeSourceUrl, activeSourceToken, videoPlayer.duration);
 			}
 		});
-		videoPlayer.addEventListener('timeupdate', updateSeekUi);
+		videoPlayer.addEventListener('timeupdate', function () {
+			enforceRepeatLoop();
+			updateSeekUi();
+		});
 		videoPlayer.addEventListener('durationchange', updateSeekUi);
 		videoPlayer.addEventListener('ended', updateSeekUi);
-		videoPlayer.addEventListener('emptied', updateSeekUi);
+		videoPlayer.addEventListener('emptied', function () {
+			resetRepeatMarkers();
+			updateSeekUi();
+		});
 
 		seekSlider.addEventListener('input', function () {
 			isSeeking = true;
@@ -1257,6 +1394,20 @@
 				}
 			});
 		}
+
+		if (repeatAButton) {
+			repeatAButton.addEventListener('click', function () {
+				setRepeatMarker('A');
+			});
+		}
+
+		if (repeatBButton) {
+			repeatBButton.addEventListener('click', function () {
+				setRepeatMarker('B');
+			});
+		}
+
+		updateRepeatMarkersUi();
 
 		document.addEventListener('keydown', function (event) {
 			if (event.key === 'Escape' && isThumbnailBrowserOpen) {
