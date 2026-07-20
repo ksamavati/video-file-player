@@ -339,6 +339,7 @@
 		var panX = 0;
 		var panY = 0;
 		var isDragging = false;
+		var baseDisplaySize = { width: 0, height: 0 };
 		var dragStartX = 0;
 		var dragStartY = 0;
 		var startPanX = 0;
@@ -356,9 +357,29 @@
 			dropOverlay.classList.add('hidden');
 		}
 
+		function updateBaseDisplaySize() {
+			var currentTransform = videoPlayer.style.transform;
+			videoPlayer.style.transform = 'none';
+			var rect = videoPlayer.getBoundingClientRect();
+			var width = rect.width || videoPlayer.videoWidth || videoPlayer.clientWidth || 300;
+			var height = rect.height || videoPlayer.videoHeight || videoPlayer.clientHeight || 150;
+			videoPlayer.style.transform = currentTransform;
+
+			if (videoRotation % 180 !== 0) {
+				var temp = width;
+				width = height;
+				height = temp;
+			}
+
+			baseDisplaySize = {
+				width: width,
+				height: height
+			};
+		}
+
 		function getVideoDisplaySize() {
-			var width = videoPlayer.videoWidth || videoPlayer.clientWidth || 300;
-			var height = videoPlayer.videoHeight || videoPlayer.clientHeight || 150;
+			var width = baseDisplaySize.width || videoPlayer.videoWidth || videoPlayer.clientWidth || 300;
+			var height = baseDisplaySize.height || videoPlayer.videoHeight || videoPlayer.clientHeight || 150;
 
 			if (videoRotation % 180 !== 0) {
 				var temp = width;
@@ -422,6 +443,7 @@
 		videoPlayer.addEventListener('loadeddata', hidePlaceholder);
 		videoPlayer.addEventListener('loadedmetadata', function () {
 			hidePlaceholder();
+			updateBaseDisplaySize();
 			applyVideoTransform(false);
 		});
 
@@ -479,12 +501,14 @@
 		});
 
 		window.addEventListener('resize', function () {
+			updateBaseDisplaySize();
 			applyVideoTransform(false);
 		});
 
 		if (rotateButton) {
 			rotateButton.addEventListener('click', function () {
 				videoRotation = (videoRotation + 90) % 360;
+				updateBaseDisplaySize();
 				applyVideoTransform(false);
 			});
 		}
